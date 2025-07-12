@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { exec } from 'child_process';
 import * as path from 'path';
 import { NewsArticle, fetchNews } from "../tools/news-fetcher";
+import { z } from 'zod';
 
 dotenv.config();
 
@@ -20,59 +21,72 @@ async function main() {
   try {
     const aiProvider = await createBestAIProvider();
 
-    rl.question('Enter your topic of interest (e.g., "AI safety"): ', async (topic) => {
-      if (!topic.trim()) {
-        console.log("No topic entered. Exiting.");
+    rl.question('Enter your topics of interest (comma separated, e.g., "AI safety, climate change, space exploration"): ', async (topicsInput) => {
+      if (!topicsInput.trim()) {
+        console.log("No topics entered. Exiting.");
         rl.close();
         return;
       }
       
-      console.log("\n🔍 Generating your personalized news briefing...");
+      const topics = topicsInput.split(',').map(topic => topic.trim()).filter(topic => topic.length > 0);
       
-      const result = await aiProvider.generateText({
-        prompt: `Fetch the latest news about ${topic}.`,
-        tools: {
-          fetchNews: {
-            description: "Fetches the latest news articles for a given topic.",
-            parameters: {
-              type: "object",
-              properties: {
-                topic: {
-                  type: "string",
-                  description: "The topic to fetch news for."
-                }
-              },
-              "required": ["topic"]
-            },
-            execute: fetchNews,
-          }
-        }
-      });
-
+      if (topics.length === 0) {
+        console.log("No valid topics entered. Exiting.");
+        rl.close();
+        return;
+      }
+      
+      console.log(`\n🔍 Generating your personalized news briefing for ${topics.length} topics...`);
+      
       let html = `
         <html>
           <head>
-            <title>News Briefing for ${topic}</title>
+            <title>Multi-Topic News Briefing</title>
             <style>
-              body { font-family: sans-serif; }
+              body { font-family: sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }
+              .topic-section { margin-bottom: 3em; border-bottom: 2px solid #666; padding-bottom: 1em; }
               .article { margin-bottom: 2em; border-bottom: 1px solid #ccc; padding-bottom: 1em; }
-              h2 { margin-bottom: 0.5em; }
-              .meta { font-style: italic; color: #555; }
+              h1 { color: #333; text-align: center; margin-bottom: 1.5em; }
+              h2 { color: #444; margin-bottom: 0.5em; }
+              h3 { color: #555; }
+              .meta { font-style: italic; color: #555; margin-bottom: 10px; }
+              .topic-title { background-color: #f5f5f5; padding: 10px; border-radius: 5px; }
+              .summary { line-height: 1.5; }
+              a { color: #0066cc; text-decoration: none; }
+              a:hover { text-decoration: underline; }
+              .date { margin-top: 0; text-align: center; color: #666; font-style: italic; }
             </style>
           </head>
           <body>
-            <h1>News Briefing for ${topic}</h1>
+            <h1>Multi-Topic News Briefing</h1>
+            <p class="date">Generated on ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
       `;
-
-      if (result && result.text) {
-        // The tool's result is expected to be a JSON string in the text property
-        const articles: NewsArticle[] = JSON.parse(result.text);
+      
+      const allArticlesCount = { total: 0 };
+      
+      for (const topic of topics) {
+        console.log(`\n📰 Fetching news for topic: ${topic}...`);
+        const articles = await fetchNews(topic);
+        
+        if (!articles || articles.length === 0) {
+          console.log(`⚠️ No articles found for topic: ${topic}. Moving to next topic.`);
+          continue;
+        }
+        
+        allArticlesCount.total += articles.length;
+        
+        html += `
+          <div class="topic-section">
+            <h2 class="topic-title">📌 ${topic}</h2>
+        `;
 
         for (const article of articles) {
+          console.log(`  • Processing article: ${article.title.substring(0, 50)}...`);
+          
           const summary = await aiProvider.streamText({
             prompt: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
               Make the summary valuable to a reader scanning for important information.
-              It should be like you are quick news reporter.
+              It should be like you are a quick news reporter.
               
               Title: ${article.title}
               Description: ${article.description}
@@ -88,17 +102,23 @@ async function main() {
 
           html += `
             <div class="article">
-              <h2><a href="${article.link}" target="_blank">${article.title}</a></h2>
+              <h3><a href="${article.link}" target="_blank">${article.title}</a></h3>
               <div class="meta">
                 <span>Source: ${article.source}</span> | 
                 <span>Published: ${new Date(article.pubDate).toLocaleString()}</span>
               </div>
-              <p>${summaryText}</p>
+              <p class="summary">${summaryText}</p>
             </div>
           `;
         }
-      } else {
-        html += `<p>Could not fetch news at this time. Please try again later.</p>`;
+
+        html += `</div>`;
+      }
+
+      if (allArticlesCount.total === 0) {
+        console.log("\n⚠️ No articles found for any of the topics. Try different topics or check your connection.");
+        rl.close();
+        return;
       }
 
       html += `
@@ -110,8 +130,9 @@ async function main() {
       const filePath = path.join(process.cwd(), fileName);
       fs.writeFileSync(fileName, html);
       
-      console.log(`\n📰 Your news briefing is ready!`);
+      console.log(`\n✅ Your multi-topic news briefing is ready!`);
       console.log(`📄 File saved to: ${fileName}`);
+      console.log(`📊 Total articles included: ${allArticlesCount.total}`);
       
       exec(`open ${fileName}`);
       
