@@ -1,0 +1,37 @@
+{
+  "name": "news-provider",
+  "version": "1.0.0",
+  "description": "Personalized News and Content Curator",
+  "main": "dist/main.js",
+  "scripts": {
+    "start": "npm run build && node dist/main.js",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "news",
+    "curator"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-schedule": "^2.1.7",
+    "@types/nodemailer": "^6.4.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@juspay/neurolink": "^4.1.1",
+    "@types/cheerio": "^0.22.35",
+    "@types/express": "^5.0.3",
+    "axios": "^1.10.0",
+    "cheerio": "^1.1.0",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "node-schedule": "^2.1.1",
+    "nodemailer": "^6.9.9",
+    "zod": "^3.25.76"
+  }
+}
