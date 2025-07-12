@@ -90,7 +90,3 @@ The application demonstrates advanced integration with NeuroLink's Model Context
 - If the email functionality doesn't work, check your SMTP settings and credentials in the `.env` file
 - Make sure you have a valid API key for at least one AI provider
 - If you're using Gmail, you may need to generate an App Password
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
