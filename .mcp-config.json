@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "email": {
+      "command": "npx",
+      "args": [
+        "ts-node",
+        "/Users/kanaboina.vignesh/Desktop/newsProvider/mcp/email/email-mcp-server.ts"
+      ],
+      "transport": "stdio",
+      "env": {}
+    }
+  }
+}

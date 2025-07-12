@@ -1,18 +1,66 @@
-import { createBestAIProvider } from "@juspay/neurolink";
+import { createBestAIProvider, NeuroLink } from "@juspay/neurolink";
 import * as dotenv from 'dotenv';
 import * as readline from 'readline';
 import * as fs from 'fs';
-import { exec } from 'child_process';
 import * as path from 'path';
-import { NewsArticle, fetchNews } from "../tools/news-fetcher";
-import { z } from 'zod';
+import { exec } from 'child_process';
+import { fetchNews } from "../tools/news-fetcher";
+import { generateNewsPDF } from './pdf-generator';
 
 dotenv.config();
+
+const MCP_CONFIG_FILE = path.join(process.cwd(), ".mcp-config.json");
+
+function loadMCPConfig(): any {
+  try {
+    if (!fs.existsSync(MCP_CONFIG_FILE)) {
+      return { mcpServers: {} };
+    }
+    const content = fs.readFileSync(MCP_CONFIG_FILE, "utf-8");
+    return JSON.parse(content);
+  } catch (error: any) {
+    console.error("[MCP] Error loading config:", error.message);
+    return { mcpServers: {} };
+  }
+}
+
+function saveMCPConfig(config: any): { success: boolean; error?: string } {
+  try {
+    fs.writeFileSync(MCP_CONFIG_FILE, JSON.stringify(config, null, 2));
+    return { success: true };
+  } catch (error: any) {
+    console.error("[MCP] Error saving config:", error.message);
+    return { success: false, error: error.message };
+  }
+}
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
+
+async function executeMCPCommand(serverName: string, toolName: string, params: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const command = `npx ts-node mcp/email/email-mcp-server.ts ${toolName} --params '${JSON.stringify(params)}'`;
+    
+    exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`exec error: ${stderr || error.message}`);
+        return reject(new Error(stderr || error.message));
+      }
+      
+      if (stderr) {
+        console.warn(`stderr: ${stderr}`);
+      }
+      
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (e) {
+        resolve({ success: true, message: stdout });
+      }
+    });
+  });
+}
 
 async function main() {
   console.log("🌟 NeuroLink Personalized Content Curator 🌟");
@@ -20,7 +68,13 @@ async function main() {
 
   try {
     const aiProvider = await createBestAIProvider();
+    
+    // Initialize NeuroLink with MCP support
+    const neurolink = new NeuroLink();
+    
+    // The email server is now a standalone script, so no registration is needed.
 
+    // Collect user input for topics
     rl.question('Enter your topics of interest (comma separated, e.g., "AI safety, climate change, space exploration"): ', async (topicsInput) => {
       if (!topicsInput.trim()) {
         console.log("No topics entered. Exiting.");
@@ -36,107 +90,109 @@ async function main() {
         return;
       }
       
-      console.log(`\n🔍 Generating your personalized news briefing for ${topics.length} topics...`);
-      
-      let html = `
-        <html>
-          <head>
-            <title>Multi-Topic News Briefing</title>
-            <style>
-              body { font-family: sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }
-              .topic-section { margin-bottom: 3em; border-bottom: 2px solid #666; padding-bottom: 1em; }
-              .article { margin-bottom: 2em; border-bottom: 1px solid #ccc; padding-bottom: 1em; }
-              h1 { color: #333; text-align: center; margin-bottom: 1.5em; }
-              h2 { color: #444; margin-bottom: 0.5em; }
-              h3 { color: #555; }
-              .meta { font-style: italic; color: #555; margin-bottom: 10px; }
-              .topic-title { background-color: #f5f5f5; padding: 10px; border-radius: 5px; }
-              .summary { line-height: 1.5; }
-              a { color: #0066cc; text-decoration: none; }
-              a:hover { text-decoration: underline; }
-              .date { margin-top: 0; text-align: center; color: #666; font-style: italic; }
-            </style>
-          </head>
-          <body>
-            <h1>Multi-Topic News Briefing</h1>
-            <p class="date">Generated on ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-      `;
-      
-      const allArticlesCount = { total: 0 };
-      
-      for (const topic of topics) {
-        console.log(`\n📰 Fetching news for topic: ${topic}...`);
-        const articles = await fetchNews(topic);
-        
-        if (!articles || articles.length === 0) {
-          console.log(`⚠️ No articles found for topic: ${topic}. Moving to next topic.`);
-          continue;
+      // Ask for the recipient email address
+      rl.question('Enter the email address to send the news briefing to: ', async (emailAddress) => {
+        if (!emailAddress.trim() || !emailAddress.includes('@')) {
+          console.log("Invalid email address. Exiting.");
+          rl.close();
+          return;
         }
         
-        allArticlesCount.total += articles.length;
+        console.log(`\n🔍 Generating your personalized news briefing for ${topics.length} topics...`);
         
-        html += `
-          <div class="topic-section">
-            <h2 class="topic-title">📌 ${topic}</h2>
-        `;
-
-        for (const article of articles) {
-          console.log(`  • Processing article: ${article.title.substring(0, 50)}...`);
+        // Prepare data for PDF generation
+        const articlesByTopic: Record<string, { article: any; summary: string }[]> = {};
+        const allArticlesCount = { total: 0 };
+        
+        // Fetch and process news for each topic
+        for (const topic of topics) {
+          console.log(`\n📰 Fetching news for topic: ${topic}...`);
+          const articles = await fetchNews(topic);
           
-          const summary = await aiProvider.streamText({
-            prompt: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
-              Make the summary valuable to a reader scanning for important information.
-              It should be like you are a quick news reporter.
-              
-              Title: ${article.title}
-              Description: ${article.description}
-            `
-          });
-
-          let summaryText = "";
-          if (summary && summary.textStream) {
-            for await (const chunk of summary.textStream) {
-              summaryText += chunk;
-            }
+          if (!articles || articles.length === 0) {
+            console.log(`⚠️ No articles found for topic: ${topic}. Moving to next topic.`);
+            continue;
           }
-
-          html += `
-            <div class="article">
-              <h3><a href="${article.link}" target="_blank">${article.title}</a></h3>
-              <div class="meta">
-                <span>Source: ${article.source}</span> | 
-                <span>Published: ${new Date(article.pubDate).toLocaleString()}</span>
-              </div>
-              <p class="summary">${summaryText}</p>
-            </div>
-          `;
+          
+          allArticlesCount.total += articles.length;
+          articlesByTopic[topic] = [];
+          
+          for (const article of articles) {
+            console.log(`  • Processing article: ${article.title.substring(0, 50)}...`);
+            
+            const summary = await aiProvider.streamText({
+              prompt: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
+                Make the summary valuable to a reader scanning for important information.
+                It should be like you are a quick news reporter.
+                
+                Title: ${article.title}
+                Description: ${article.description}
+              `
+            });
+  
+            let summaryText = "";
+            if (summary && summary.textStream) {
+              for await (const chunk of summary.textStream) {
+                summaryText += chunk;
+              }
+            }
+            
+            articlesByTopic[topic].push({ article, summary: summaryText });
+          }
         }
-
-        html += `</div>`;
-      }
-
-      if (allArticlesCount.total === 0) {
-        console.log("\n⚠️ No articles found for any of the topics. Try different topics or check your connection.");
+        
+        if (allArticlesCount.total === 0) {
+          console.log("\n⚠️ No articles found for any of the topics. Try different topics or check your connection.");
+          rl.close();
+          return;
+        }
+        
+        // Generate PDF
+        console.log(`\n📄 Generating PDF document...`);
+        const title = "Multi-Topic News Briefing";
+        const date = new Date().toLocaleDateString('en-US', { 
+          weekday: 'long', 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        });
+        
+        const pdfPath = await generateNewsPDF({
+          title,
+          date,
+          topics,
+          articlesByTopic
+        });
+        
+        console.log(`📄 PDF saved to: ${pdfPath}`);
+        
+        // Send email with the PDF attachment using MCP
+        console.log(`\n📧 Sending email to ${emailAddress}...`);
+        try {
+          // Use MCP to send the email
+          const emailResult = await executeMCPCommand("email", "sendEmail", {
+            to: emailAddress,
+            subject: `Your Personalized News Briefing - ${date}`,
+            text: `Hello,\n\nAttached is your personalized news briefing covering the following topics: ${topics.join(', ')}.\n\nEnjoy your reading!\n\nRegards,\nNeuroLink News Provider`,
+            attachmentPath: pdfPath,
+            attachmentName: path.basename(pdfPath)
+          });
+          
+          if (emailResult && emailResult.success) {
+            console.log(`✅ ${emailResult.message || "Email sent successfully!"}`);
+            console.log(`\n✅ Your multi-topic news briefing has been emailed to: ${emailAddress}`);
+          } else {
+            console.error("⚠️ Email sending reported failure:", emailResult?.message || "Unknown error");
+            console.log("You can still view the PDF at:", pdfPath);
+          }
+        } catch (emailError) {
+          console.error("Failed to send email:", emailError instanceof Error ? emailError.message : emailError);
+          console.log("You can still view the PDF at:", pdfPath);
+        }
+        
+        console.log(`📊 Total articles included: ${allArticlesCount.total}`);
         rl.close();
-        return;
-      }
-
-      html += `
-          </body>
-        </html>
-      `;
-      
-      const fileName = `news-briefing-${Date.now()}.html`;
-      const filePath = path.join(process.cwd(), fileName);
-      fs.writeFileSync(fileName, html);
-      
-      console.log(`\n✅ Your multi-topic news briefing is ready!`);
-      console.log(`📄 File saved to: ${fileName}`);
-      console.log(`📊 Total articles included: ${allArticlesCount.total}`);
-      
-      exec(`open ${fileName}`);
-      
-      rl.close();
+      });
     });
 
   } catch (error) {
