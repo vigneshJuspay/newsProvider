@@ -39,7 +39,7 @@ export async function fetchNews(topic: string): Promise<NewsArticle[]> {
     });
     
     console.log(`[NewsFetcher Tool] Found ${articles.length} articles from the last 24 hours.`);
-    return articles.slice(0, 5); // Limit to top 5
+    return articles.slice(0, 5);
   } catch (error) {
     console.error("[NewsFetcher Tool] Error fetching or parsing RSS feed:", error);
     return [];

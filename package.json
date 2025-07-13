@@ -35,5 +35,14 @@
     "nodemailer": "^6.10.1",
     "pdfkit": "^0.17.1",
     "zod": "^3.25.76"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshJuspay/newsProvider.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/vigneshJuspay/newsProvider/issues"
+  },
+  "homepage": "https://github.com/vigneshJuspay/newsProvider#readme"
 }

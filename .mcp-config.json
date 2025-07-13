@@ -8,6 +8,15 @@
       ],
       "transport": "stdio",
       "env": {}
+    },
+    "news": {
+      "command": "npx",
+      "args": [
+        "ts-node",
+        "/Users/kanaboina.vignesh/Desktop/newsProvider/mcp/news/news-mcp-server.ts"
+      ],
+      "transport": "stdio",
+      "env": {}
     }
   }
 }

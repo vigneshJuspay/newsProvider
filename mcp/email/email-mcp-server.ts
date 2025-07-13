@@ -1,6 +1,5 @@
 import * as nodemailer from 'nodemailer';
 import { createReadStream } from 'fs';
-import * as path from 'path';
 import * as dotenv from 'dotenv';
 
 dotenv.config();

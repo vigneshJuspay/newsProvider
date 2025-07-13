@@ -4,7 +4,6 @@ import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
-import { fetchNews } from "../tools/news-fetcher";
 import { generateNewsPDF } from './pdf-generator';
 
 dotenv.config();
@@ -24,16 +23,6 @@ function loadMCPConfig(): any {
   }
 }
 
-function saveMCPConfig(config: any): { success: boolean; error?: string } {
-  try {
-    fs.writeFileSync(MCP_CONFIG_FILE, JSON.stringify(config, null, 2));
-    return { success: true };
-  } catch (error: any) {
-    console.error("[MCP] Error saving config:", error.message);
-    return { success: false, error: error.message };
-  }
-}
-
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
@@ -41,7 +30,16 @@ const rl = readline.createInterface({
 
 async function executeMCPCommand(serverName: string, toolName: string, params: any): Promise<any> {
   return new Promise((resolve, reject) => {
-    const command = `npx ts-node mcp/email/email-mcp-server.ts ${toolName} --params '${JSON.stringify(params)}'`;
+    const mcpConfig = loadMCPConfig();
+    const serverConfig = mcpConfig.mcpServers[serverName];
+    
+    if (!serverConfig) {
+      return reject(new Error(`MCP server "${serverName}" not found in config`));
+    }
+    
+    const command = `${serverConfig.command} ${serverConfig.args.join(' ')} ${toolName} --params '${JSON.stringify(params)}'`;
+    
+    console.log(`[DEBUG] Executing MCP command: ${command}`);
     
     exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
       if (error) {
@@ -53,10 +51,40 @@ async function executeMCPCommand(serverName: string, toolName: string, params: a
         console.warn(`stderr: ${stderr}`);
       }
       
+      console.log(`[DEBUG] MCP response raw: ${stdout.substring(0, 200)}...`);
+      
       try {
-        resolve(JSON.parse(stdout));
+        const jsonStartMarker = "---JSON_START---";
+        const jsonEndMarker = "---JSON_END---";
+        const startIndex = stdout.indexOf(jsonStartMarker);
+        const endIndex = stdout.indexOf(jsonEndMarker);
+        
+        if (startIndex >= 0 && endIndex > startIndex) {
+          const jsonString = stdout.substring(startIndex + jsonStartMarker.length, endIndex).trim();
+          console.log(`[DEBUG] Extracted JSON string: ${jsonString.substring(0, 200)}...`);
+          
+          const result = JSON.parse(jsonString);
+          console.log(`[DEBUG] MCP parsed response: ${JSON.stringify(result).substring(0, 200)}...`);
+          resolve(result);
+        } else {
+          const jsonStartIndex = stdout.indexOf('{');
+          const jsonEndIndex = stdout.lastIndexOf('}');
+          
+          if (jsonStartIndex >= 0 && jsonEndIndex > jsonStartIndex) {
+            const jsonString = stdout.substring(jsonStartIndex, jsonEndIndex + 1);
+            console.log(`[DEBUG] Fallback extraction - JSON string: ${jsonString.substring(0, 200)}...`);
+            
+            const result = JSON.parse(jsonString);
+            console.log(`[DEBUG] Fallback parsed response: ${JSON.stringify(result).substring(0, 200)}...`);
+            resolve(result);
+          } else {
+            console.log(`[DEBUG] Could not find valid JSON in response`);
+            resolve({ success: false, message: "Invalid response format from MCP server" });
+          }
+        }
       } catch (e) {
-        resolve({ success: true, message: stdout });
+        console.log(`[DEBUG] Failed to parse MCP response as JSON:`, e);
+        resolve({ success: false, message: "Failed to parse response from MCP server" });
       }
     });
   });
@@ -68,13 +96,6 @@ async function main() {
 
   try {
     const aiProvider = await createBestAIProvider();
-    
-    // Initialize NeuroLink with MCP support
-    const neurolink = new NeuroLink();
-    
-    // The email server is now a standalone script, so no registration is needed.
-
-    // Collect user input for topics
     rl.question('Enter your topics of interest (comma separated, e.g., "AI safety, climate change, space exploration"): ', async (topicsInput) => {
       if (!topicsInput.trim()) {
         console.log("No topics entered. Exiting.");
@@ -90,7 +111,6 @@ async function main() {
         return;
       }
       
-      // Ask for the recipient email address
       rl.question('Enter the email address to send the news briefing to: ', async (emailAddress) => {
         if (!emailAddress.trim() || !emailAddress.includes('@')) {
           console.log("Invalid email address. Exiting.");
@@ -100,44 +120,50 @@ async function main() {
         
         console.log(`\n🔍 Generating your personalized news briefing for ${topics.length} topics...`);
         
-        // Prepare data for PDF generation
         const articlesByTopic: Record<string, { article: any; summary: string }[]> = {};
         const allArticlesCount = { total: 0 };
         
-        // Fetch and process news for each topic
         for (const topic of topics) {
           console.log(`\n📰 Fetching news for topic: ${topic}...`);
-          const articles = await fetchNews(topic);
           
-          if (!articles || articles.length === 0) {
-            console.log(`⚠️ No articles found for topic: ${topic}. Moving to next topic.`);
-            continue;
-          }
-          
-          allArticlesCount.total += articles.length;
-          articlesByTopic[topic] = [];
-          
-          for (const article of articles) {
-            console.log(`  • Processing article: ${article.title.substring(0, 50)}...`);
+          try {
+            console.log(`[DEBUG] Calling news MCP server for topic: ${topic}`);
+            const newsResult = await executeMCPCommand("news", "fetchNews", { topic });
+            console.log(`[DEBUG] News result success: ${newsResult.success}, has articles: ${newsResult.articles ? 'yes' : 'no'}, articles count: ${newsResult.articles?.length || 0}`);
             
-            const summary = await aiProvider.streamText({
-              prompt: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
-                Make the summary valuable to a reader scanning for important information.
-                It should be like you are a quick news reporter.
-                
-                Title: ${article.title}
-                Description: ${article.description}
-              `
-            });
-  
-            let summaryText = "";
-            if (summary && summary.textStream) {
-              for await (const chunk of summary.textStream) {
-                summaryText += chunk;
-              }
+            if (!newsResult.success || !newsResult.articles || newsResult.articles.length === 0) {
+              console.log(`⚠️ No articles found for topic: ${topic}. Moving to next topic.`);
+              continue;
             }
             
-            articlesByTopic[topic].push({ article, summary: summaryText });
+            const articles = newsResult.articles;
+            allArticlesCount.total += articles.length;
+            articlesByTopic[topic] = [];
+            
+            for (const article of articles) {
+              console.log(`  • Processing article: ${article.title.substring(0, 50)}...`);
+              
+              const summary = await aiProvider.streamText({
+                prompt: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
+                  Make the summary valuable to a reader scanning for important information.
+                  It should be like you are a quick news reporter.
+                  
+                  Title: ${article.title}
+                  Description: ${article.description}
+                `
+              });
+    
+              let summaryText = "";
+              if (summary && summary.textStream) {
+                for await (const chunk of summary.textStream) {
+                  summaryText += chunk;
+                }
+              }
+              
+              articlesByTopic[topic].push({ article, summary: summaryText });
+            }
+          } catch (error) {
+            console.error(`⚠️ Error fetching news for topic '${topic}':`, error instanceof Error ? error.message : error);
           }
         }
         
@@ -147,7 +173,6 @@ async function main() {
           return;
         }
         
-        // Generate PDF
         console.log(`\n📄 Generating PDF document...`);
         const title = "Multi-Topic News Briefing";
         const date = new Date().toLocaleDateString('en-US', { 
@@ -166,10 +191,8 @@ async function main() {
         
         console.log(`📄 PDF saved to: ${pdfPath}`);
         
-        // Send email with the PDF attachment using MCP
         console.log(`\n📧 Sending email to ${emailAddress}...`);
         try {
-          // Use MCP to send the email
           const emailResult = await executeMCPCommand("email", "sendEmail", {
             to: emailAddress,
             subject: `Your Personalized News Briefing - ${date}`,
