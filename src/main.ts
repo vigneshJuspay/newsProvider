@@ -1,4 +1,4 @@
-import { createBestAIProvider, NeuroLink } from "@juspay/neurolink";
+import { NeuroLink } from "@juspay/neurolink";
 import * as dotenv from 'dotenv';
 import * as readline from 'readline';
 import * as fs from 'fs';
@@ -95,7 +95,7 @@ async function main() {
   console.log("------------------------------------------");
 
   try {
-    const aiProvider = await createBestAIProvider();
+    const neurolink = new NeuroLink();
     rl.question('Enter your topics of interest (comma separated, e.g., "AI safety, climate change, space exploration"): ', async (topicsInput) => {
       if (!topicsInput.trim()) {
         console.log("No topics entered. Exiting.");
@@ -143,21 +143,20 @@ async function main() {
             for (const article of articles) {
               console.log(`  • Processing article: ${article.title.substring(0, 50)}...`);
               
-              const summary = await aiProvider.streamText({
-                prompt: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
-                  Make the summary valuable to a reader scanning for important information.
-                  It should be like you are a quick news reporter.
-                  
-                  Title: ${article.title}
-                  Description: ${article.description}
-                `
+              const summaryStream = await neurolink.stream({
+                input: {
+                  text: `Summarize the following article in one concise, informative paragraph of about 4-5 sentences.
+Make the summary valuable to a reader scanning for important information.
+It should be like you are a quick news reporter.
+
+Title: ${article.title}
+Description: ${article.description}`
+                }
               });
     
               let summaryText = "";
-              if (summary && summary.textStream) {
-                for await (const chunk of summary.textStream) {
-                  summaryText += chunk;
-                }
+              for await (const chunk of summaryStream.stream) {
+                summaryText += chunk.content || "";
               }
               
               articlesByTopic[topic].push({ article, summary: summaryText });
